@@ -52,6 +52,51 @@ async function refreshOutdoorWeather(){
     renderOutdoor();
   }
 }
+
+// BEGIN SAVED CONNECTION SETTINGS V18
+const SETTINGS_KEY='staromiska78a.connection.v1';
+function validConnectionSettings(value){
+  if(!value||value.version!==1||typeof value.broker!=='string'||typeof value.username!=='string'||typeof value.password!=='string'||!value.username.trim()||!value.password)return false;
+  try{const url=new URL(value.broker);return url.protocol==='wss:'&&Boolean(url.hostname)&&!url.username&&!url.password;}catch{return false;}
+}
+function settingsMessage(message,error=false){
+  $('settingsFeedback').textContent=message;
+  $('settingsFeedback').className='note'+(error?' error':'');
+}
+function restoreConnectionSettings(){
+  try{
+    const raw=localStorage.getItem(SETTINGS_KEY);
+    if(!raw)return;
+    $('forgetSettings').hidden=false;
+    const saved=JSON.parse(raw);
+    if(!validConnectionSettings(saved))throw new Error('Invalid saved settings');
+    $('broker').value=saved.broker;
+    $('username').value=saved.username;
+    $('password').value=saved.password;
+    settingsMessage('Збережені налаштування підставлено. Натисніть «Підключитися».');
+  }catch{settingsMessage('Не вдалося прочитати збережені налаштування. Введіть їх вручну.',true);}
+}
+$('saveSettings').addEventListener('click',()=>{
+  const settings={version:1,broker:$('broker').value.trim(),username:$('username').value.trim(),password:$('password').value};
+  if(!validConnectionSettings(settings)){settingsMessage('Введіть коректну WSS-адресу, користувача та пароль.',true);return;}
+  try{
+    localStorage.setItem(SETTINGS_KEY,JSON.stringify(settings));
+    $('forgetSettings').hidden=false;
+    settingsMessage('Налаштування збережено в цьому браузері.');
+  }catch{settingsMessage('Браузер не дозволив збереження. Можна підключитися без нього.',true);}
+});
+$('forgetSettings').addEventListener('click',()=>{
+  try{
+    localStorage.removeItem(SETTINGS_KEY);
+    $('forgetSettings').hidden=true;
+    $('password').value='';
+    settingsMessage('Збережені дані видалено. Поточне підключення не змінено.');
+  }catch{settingsMessage('Не вдалося видалити збережені дані. Спробуйте очистити дані сайту в браузері.',true);}
+});
+for(const id of ['broker','username','password'])$(id).addEventListener('input',()=>settingsMessage('Поля змінено. Натисніть «Зберегти налаштування», щоб запам’ятати їх.'));
+restoreConnectionSettings();
+// END SAVED CONNECTION SETTINGS V18
+
 const log=s=>{const line=document.createElement('div');line.textContent=new Date().toLocaleTimeString('uk-UA')+' · '+s;$('log').prepend(line);while($('log').children.length>80)$('log').lastElementChild.remove()};
 const note=(s,cls='')=>{$('tempFeedback').textContent=s;$('tempFeedback').className='note '+cls;log(s)};
 const connected=()=>Boolean(client?.connected);
@@ -108,7 +153,7 @@ function adjust(delta){
   submitSetpoint(Math.round((Number(old)+delta)*2)/2);
 }
 function process(topic,payload,packet={}){if(topic===BASE+'/availability'){availability=payload.trim().toLowerCase();log('ESP32: '+availability);render();return;}if(topic===BASE+'/state'){let obj;try{obj=JSON.parse(payload);if(!obj||typeof obj.boiler_on!=='boolean')return;}catch(e){log('Помилка JSON стану');return;}state=obj;lastStateAt=Date.now();if((desired!==null||failedTarget!==null)&&packet.retain!==true&&obj.vacation!==true&&typeof obj.boiler_setpoint==='number'&&Math.abs(obj.boiler_setpoint-(desired??failedTarget))<0.05){const target=desired??failedTarget;clearPending();failedTarget=null;confirmedAt=Date.now();note('ESP32 підтвердила уставку '+target.toFixed(1)+' °C.','');}else if(desired!==null){log('Очікуємо '+desired.toFixed(1)+' °C, ESP32 повідомляє '+fmt(obj.boiler_setpoint,' °C'));}render();return;}if(topic.startsWith(BASE+'/'))log(topic.slice(BASE.length+1)+': '+payload.slice(0,120));}
-function disconnect(){connectionId++;if(client){const c=client;client=null;c.end(true)}clearPending();failedTarget=null;state=null;availability='unknown';lastStateAt=0;$('password').value='';render()}
+function disconnect(){connectionId++;if(client){const c=client;client=null;c.end(true)}clearPending();failedTarget=null;state=null;availability='unknown';lastStateAt=0;render()}
 $('connect').addEventListener('click',()=>{if(!window.mqtt){$('error').textContent='Бібліотека MQTT не завантажена';return;}const url=$('broker').value.trim(),username=$('username').value.trim(),password=$('password').value;if(!/^wss:\/\//.test(url)||!username||!password){$('error').textContent='Заповніть WSS, користувача і пароль';return;}$('error').textContent='';if(client)client.end(true);const id=++connectionId;state=null;lastStateAt=0;availability='unknown';clearPending();failedTarget=null;const c=mqtt.connect(url,{username,password,clientId:'staromiska_v11_'+Math.random().toString(16).slice(2,12),clean:true,connectTimeout:12000,reconnectPeriod:4000,protocolVersion:4});client=c;c.on('connect',()=>{if(id!==connectionId)return;log('MQTT підключено');c.subscribe(BASE+'/#',{qos:0},err=>{if(err)$('error').textContent='Помилка підписки: '+err.message});nav('home');render()});c.on('message',(t,b,packet)=>{if(id===connectionId)process(t,b.toString(),packet)});c.on('close',()=>{if(id!==connectionId)return;availability='unknown';render()});c.on('error',err=>{if(id!==connectionId)return;$('error').textContent='MQTT: '+err.message;render()});render()});$('disconnect').addEventListener('click',disconnect);
 for(let i=1;i<=3;i++){const b=document.createElement('button');b.dataset.light=i;b.disabled=true;b.addEventListener('click',()=>{const on=state?.lights?.[i-1]===true;send('light/'+i+'/set',on?'OFF':'ON','Світло '+i+' '+(on?'OFF':'ON'))});$('lightsGrid').append(b)}
 for(let i=1;i<=4;i++){const b=document.createElement('button');b.dataset.zone=i;b.textContent='Зона '+i+' — 1 хв';b.disabled=true;b.addEventListener('click',()=>{if(!live())return;if(!window.confirm('Запустити полив зони '+i+'?'))return;send('water/'+i+'/set','START','Полив зони '+i)});$('zones').append(b)}
