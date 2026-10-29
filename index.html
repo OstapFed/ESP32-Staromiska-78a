@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#10243b">
+  <meta name="description" content="Віддалений MQTT-пульт Староміська 78а">
+  <title>Староміська 78а — віддалений доступ</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="wrap">
+    <header><span class="eyebrow">ESP32-S3 · Віддалений доступ</span><h1>Староміська 78а</h1><p>Пульт MQTT через EMQX Cloud</p></header>
+    <section class="panel">
+      <div class="between"><h2>Підключення</h2><span id="status" class="status">Не підключено</span></div>
+      <p class="muted">Дані доступу залишаються у відкритій вкладці. Вони не записуються до GitHub або локального сховища.</p>
+      <label>WSS адреса брокера<input id="broker" type="text" value="wss://v851c902.ala.eu-central-1.emqxsl.com:8084/mqtt" autocomplete="off" spellcheck="false"></label>
+      <div class="two"><label>Користувач MQTT<input id="username" type="text" value="garden78a" autocomplete="username"></label><label>Пароль MQTT<input id="password" type="password" autocomplete="off" placeholder="Введіть пароль"></label></div>
+      <label>Тема для підписки<input id="subscribeTopic" type="text" value="garden/controller/#" spellcheck="false"></label>
+      <div class="actions"><button id="connect" class="primary">Підключитися</button><button id="disconnect" disabled>Відключитися</button></div>
+      <p id="error" class="error" role="alert"></p>
+    </section>
+    <section class="panel">
+      <h2>Отримані повідомлення</h2>
+      <p class="muted">Після підключення відображатимуться MQTT-повідомлення від ESP32-S3.</p>
+      <div id="messages" class="messages" aria-live="polite"><div class="empty">Повідомлень поки немає</div></div>
+      <button id="clear" class="secondary">Очистити журнал</button>
+    </section>
+    <section class="panel">
+      <h2>Тестова команда MQTT</h2>
+      <p class="muted">Використовуйте лише перевірені теми та значення. Команди керування котлом, освітленням і поливом додамо після звірки з прошивкою.</p>
+      <label>Тема публікації<input id="publishTopic" type="text" placeholder="garden/controller/..." spellcheck="false"></label>
+      <label>Повідомлення<textarea id="payload" rows="3" placeholder="Текст або JSON"></textarea></label>
+      <button id="publish" class="primary" disabled>Надіслати повідомлення</button>
+      <p id="publishResult" class="muted" aria-live="polite"></p>
+    </section>
+    <footer>Версія вебпульта 0.1 · Тест підключення · Не замінює локальну автоматику ESP32-S3</footer>
+  </main>
+  <script src="https://unpkg.com/mqtt@5.14.1/dist/mqtt.min.js"></script>
+  <script src="app.js" defer></script>
+</body>
+</html>
