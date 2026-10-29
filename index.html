@@ -1,42 +1,10 @@
-<!doctype html>
-<html lang="uk">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#10243b">
-  <meta name="description" content="Віддалений MQTT-пульт Староміська 78а">
-  <title>Староміська 78а — віддалений доступ</title>
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-  <main class="wrap">
-    <header><span class="eyebrow">ESP32-S3 · Віддалений доступ</span><h1>Староміська 78а</h1><p>Пульт MQTT через EMQX Cloud</p></header>
-    <section class="panel">
-      <div class="between"><h2>Підключення</h2><span id="status" class="status">Не підключено</span></div>
-      <p class="muted">Дані доступу залишаються у відкритій вкладці. Вони не записуються до GitHub або локального сховища.</p>
-      <label>WSS адреса брокера<input id="broker" type="text" value="wss://v851c902.ala.eu-central-1.emqxsl.com:8084/mqtt" autocomplete="off" spellcheck="false"></label>
-      <div class="two"><label>Користувач MQTT<input id="username" type="text" value="garden78a" autocomplete="username"></label><label>Пароль MQTT<input id="password" type="password" autocomplete="off" placeholder="Введіть пароль"></label></div>
-      <label>Тема для підписки<input id="subscribeTopic" type="text" value="garden/controller/#" spellcheck="false"></label>
-      <div class="actions"><button id="connect" class="primary">Підключитися</button><button id="disconnect" disabled>Відключитися</button></div>
-      <p id="error" class="error" role="alert"></p>
-    </section>
-    <section class="panel">
-      <h2>Отримані повідомлення</h2>
-      <p class="muted">Після підключення відображатимуться MQTT-повідомлення від ESP32-S3.</p>
-      <div id="messages" class="messages" aria-live="polite"><div class="empty">Повідомлень поки немає</div></div>
-      <button id="clear" class="secondary">Очистити журнал</button>
-    </section>
-    <section class="panel">
-      <h2>Тестова команда MQTT</h2>
-      <p class="muted">Використовуйте лише перевірені теми та значення. Команди керування котлом, освітленням і поливом додамо після звірки з прошивкою.</p>
-      <label>Тема публікації<input id="publishTopic" type="text" placeholder="garden/controller/..." spellcheck="false"></label>
-      <label>Повідомлення<textarea id="payload" rows="3" placeholder="Текст або JSON"></textarea></label>
-      <button id="publish" class="primary" disabled>Надіслати повідомлення</button>
-      <p id="publishResult" class="muted" aria-live="polite"></p>
-    </section>
-    <footer>Версія вебпульта 0.1 · Тест підключення · Не замінює локальну автоматику ESP32-S3</footer>
-  </main>
-  <script src="https://unpkg.com/mqtt@5.14.1/dist/mqtt.min.js"></script>
-  <script src="app.js" defer></script>
-</body>
-</html>
+<!doctype html><html lang="uk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b1724"><title>Староміська 78а · Віддалений пульт</title><link rel="stylesheet" href="style.css"></head><body><main class="wrap">
+<header><div><span class="eyebrow">ESP32-S3 · MQTT CLOUD</span><h1>🏡 Староміська 78а</h1><p>Віддалене керування · V1.0</p></div><span id="connection" class="pill">Не підключено</span></header>
+<section class="panel setup"><details id="connectionDetails" open><summary>🔐 Підключення EMQX Cloud</summary><p class="muted">Пароль не зберігається на сайті чи GitHub. Після закриття вкладки його потрібно ввести знову.</p><label>Адреса WSS<input id="broker" value="wss://v851c902.ala.eu-central-1.emqxsl.com:8084/mqtt" spellcheck="false"></label><div class="two"><label>Користувач<input id="username" value="garden78a" autocomplete="username"></label><label>Пароль MQTT<input id="password" type="password" autocomplete="off" placeholder="Пароль"></label></div><div class="buttons"><button id="connect" class="primary">Підключитися</button><button id="disconnect" disabled>Відключитися</button></div><p id="error" class="error" role="alert"></p></details></section>
+<div id="stale" class="warning">Немає актуальних даних ESP32. Керування недоступне.</div>
+<section class="stats"><div class="tile"><span>🌡️ У будинку</span><strong id="temperature">—</strong><small id="sensorName">Xiaomi</small></div><div class="tile"><span>💧 Вологість</span><strong id="humidity">—</strong><small id="xiaomiStatus">Датчик: —</small></div><div class="tile"><span>🌤️ Надворі</span><strong id="outdoor">—</strong><small>Погода ESP32</small></div><div class="tile"><span>🔥 Котел</span><strong id="boilerState">—</strong><small id="boilerMode">Режим: —</small></div></section>
+<section class="panel"><div class="heading"><h2>🔥 Опалення</h2><span id="boilerChip" class="pill">—</span></div><p class="muted">Задана температура · крок 0,5 °C</p><div class="setpoint"><button id="tempDown" class="round" disabled aria-label="Зменшити температуру">−</button><strong id="setpoint">— °C</strong><button id="tempUp" class="round" disabled aria-label="Збільшити температуру">+</button></div><p class="muted">Зміна температури переводить котел у режим AUTO та встановлює ручну уставку.</p><div class="buttons"><button data-mode="AUTO" disabled>Авто</button><button data-mode="OFF" class="danger-outline" disabled>Вимкнути котел</button><button id="resetSchedule" disabled>Повернути розклад</button></div></section>
+<section class="panel"><div class="heading"><h2>💡 Освітлення</h2><span class="muted">3 канали</span></div><div id="lights" class="controlGrid"></div></section>
+<section class="panel"><div class="heading"><h2>💧 Полив</h2><span id="waterState" class="pill">—</span></div><p class="muted">Дистанційний запуск зони в прошивці V35.9 виконується командою START. Тривалість визначає ESP32. Перед запуском буде підтвердження.</p><div id="zones" class="controlGrid"></div><button id="stopWater" class="stop" disabled>■ STOP · Зупинити полив</button><p id="rain" class="muted"></p></section>
+<section class="panel"><div class="heading"><h2>📡 Стан системи</h2><span id="lastSeen" class="muted">Немає даних</span></div><div class="details"><div>ESP32 <b id="availability">—</b></div><div>Прошивка <b id="firmware">—</b></div><div>IP у будинку <b id="ip">—</b></div><div>Датчик Xiaomi <b id="battery">—</b></div></div><p id="feedback" class="feedback" aria-live="polite">Після надсилання команди очікуємо оновлення стану від ESP32.</p><details><summary>Технічний журнал MQTT</summary><div id="log" class="log"></div></details></section>
+<footer>Вебпульт V1.0 · GitHub Pages + EMQX Cloud · Автоматика залишається на ESP32-S3</footer></main><script src="https://unpkg.com/mqtt@5.14.1/dist/mqtt.min.js"></script><script src="app.js" defer></script></body></html>
