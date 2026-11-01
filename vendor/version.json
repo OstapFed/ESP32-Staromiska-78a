@@ -1,0 +1,6 @@
+{
+  "mqtt": "5.16.1",
+  "license": "MIT",
+  "source": "https://github.com/mqttjs/MQTT.js",
+  "sha256": "75873d04a6400bbbac093b3602caf06f44ed92ee032925e1f4f21c03eba05a4e"
+}

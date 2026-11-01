@@ -1,186 +1,143 @@
-"use strict";
-(()=>{
-const $=id=>document.getElementById(id),BASE='garden/controller';
-let client=null,connectionId=0,availability='unknown',state=null,lastStateAt=0,desired=null,commandAt=0,commandTimeout=null,confirmedAt=0,failedTarget=null,setpointAttempt=0;
-const fmt=(v,s='')=>typeof v==='number'&&Number.isFinite(v)?v.toFixed(1)+s:'—';
-// Accept numeric MQTT strings for the outdoor display without coercing missing data to 0.
-function outdoorTemperature(value){
-  if(typeof value==='number')return Number.isFinite(value)?value:null;
-  if(typeof value!=='string')return null;
-  const text=value.trim();
-  if(!/^[+-]?(?:\d+(?:[.,]\d+)?|[.,]\d+)$/.test(text))return null;
-  const number=Number(text.replace(',','.'));
-  return Number.isFinite(number)?number:null;
-}
-// Match refreshOutdoorTemp() in Garden_U_V35_9_FAST_START.ino.
-// Display-only weather data; never used for heating or watering commands.
-const WEATHER_URL='https://api.open-meteo.com/v1/forecast?latitude=48.53&longitude=25.04&current=temperature_2m&timezone=Europe%2FKyiv';
-let outdoorWeather=null,outdoorWeatherAt=0,outdoorWeatherBusy=false,outdoorWeatherError=false;
-function renderOutdoor(){
-  const fresh=outdoorWeatherAt>0&&Date.now()-outdoorWeatherAt<30*60*1000;
-  const value=fresh?outdoorWeather:null;
-  $('outdoor').textContent=value===null?'—':fmt(value,' °C');
-  const description=value!==null?
-    'Open-Meteo · 48.53, 25.04 · оновлено '+new Date(outdoorWeatherAt).toLocaleTimeString('uk-UA'):
-    outdoorWeatherBusy?'Завантаження погоди Open-Meteo…':
-    outdoorWeatherError?'Open-Meteo недоступний. Повторимо запит автоматично.':'Очікування погоди Open-Meteo';
-  $('outdoor').title=description;
-  $('outdoorSource').textContent=value!==null?(outdoorWeatherError?'Open-Meteo · повторюємо':'Open-Meteo'):
-    outdoorWeatherBusy?'Завантаження…':'Погода недоступна';
-  $('outdoorSource').title=description;
-}
-async function refreshOutdoorWeather(){
-  if(outdoorWeatherBusy)return;
-  outdoorWeatherBusy=true;
-  renderOutdoor();
-  const controller=new AbortController();
-  const timeout=setTimeout(()=>controller.abort(),12000);
-  try{
-    const response=await fetch(WEATHER_URL,{cache:'no-store',signal:controller.signal});
-    if(!response.ok)throw new Error('HTTP '+response.status);
-    const data=await response.json();
-    const value=outdoorTemperature(data?.current?.temperature_2m);
-    if(value===null)throw new Error('Відсутня температура');
-    outdoorWeather=value;
-    outdoorWeatherAt=Date.now();
-    outdoorWeatherError=false;
-  }catch(error){
-    outdoorWeatherError=true;
-  }finally{
-    clearTimeout(timeout);
-    outdoorWeatherBusy=false;
-    renderOutdoor();
-  }
-}
+import {LocalSecrets} from './lib/secrets.js';
+import {GardenTransport} from './lib/transport.js';
+import {HEAT_BUTTONS,escapeHTML as e,halfDegree,modeName,validateConnection,gateDescription,parseDeviceState} from './lib/protocol.js';
+import {demoState,demoConfig,applyDemo} from './lib/demo.js';
 
-// BEGIN SAVED CONNECTION SETTINGS V19
-const SETTINGS_KEY='staromiska78a.connection.v1';
-let settingsRevision=0;
-let restoredSettings=false,resumeAfterPageHide=false;
-function validConnectionSettings(value){
-  if(!value||value.version!==1||typeof value.broker!=='string'||typeof value.username!=='string'||typeof value.password!=='string'||!value.username.trim()||!value.password)return false;
-  try{const url=new URL(value.broker);return url.protocol==='wss:'&&Boolean(url.hostname)&&!url.username&&!url.password;}catch{return false;}
+const $=id=>document.getElementById(id),qa=(s,r=document)=>[...r.querySelectorAll(s)];
+const STORAGE='staromiska78a.connection.v1',LOG_KEY='staromiska78a.pwa.log.v22',STATE_KEY='staromiska78a.pwa.state.v22';
+const transport=new GardenTransport();let state=null,config=null,activeGate=0,busy=false,configLoaded=false,installPrompt=null,waitingWorker=null,manuallyDisconnected=false;
+const secrets=new LocalSecrets(),secretScope=()=>transport.config?transport.config.url+'|'+transport.config.base:'demo';
+function rememberSecret(key,value){if(demo)return;try{secrets.set(secretScope(),key,value);}catch{toast('Браузер не дозволив зберегти пароль',true);}}
+let demo=new URLSearchParams(location.search).get('demo')==='1',demoReceived=0,history=[],logs=[];
+const fresh=()=>demo||transport.fresh,extended=()=>demo||(transport.gateway&&configLoaded&&fresh());
+const fmt=(v,suffix=' °C')=>typeof v==='number'&&Number.isFinite(v)?v.toFixed(1)+suffix:'—';
+const asTime=(hour,min)=>`${String(hour).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
+const knownPages=new Set(qa('.page').map(n=>n.id));
+function toast(text,error=false){$('toast').hidden=false;$('toast').textContent=text;$('toast').classList.toggle('error',error);clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').hidden=true,error?7000:4000);}
+function log(text){logs.unshift({time:new Date().toISOString(),text});logs=logs.slice(0,150);try{localStorage.setItem(LOG_KEY,JSON.stringify(logs));}catch{}renderLog();}
+function renderLog(){$('log').replaceChildren(...logs.map(row=>{const n=document.createElement('div');n.textContent=new Date(row.time).toLocaleString('uk-UA')+' · '+row.text;return n;}));}
+function nav(id,replace=false){if(!knownPages.has(id))id='home';qa('.page').forEach(n=>n.classList.toggle('active',n.id===id));if(location.hash!=='#'+id){if(replace)historyReplace(id);else location.hash=id;}window.scrollTo({top:0,behavior:'instant'});if(['auto','vacation','sensors','lights','water','memo','settings'].includes(id))populateForms();}
+function historyReplace(id){window.history.replaceState(null,'','#'+id);}
+qa('[data-go]').forEach(n=>n.addEventListener('click',ev=>{ev.preventDefault();nav(n.dataset.go);}));
+window.addEventListener('hashchange',()=>nav(location.hash.slice(1)||'home',true));
+function setText(id,value){$(id).textContent=value;}
+function acceptState(next,freshMessage=true){
+ state=next;if(freshMessage){demoReceived=Date.now();if(typeof next.temperature==='number'){history.push({at:Date.now(),value:next.temperature});history=history.filter(p=>p.at>Date.now()-6*3600000).slice(-1440);}}
+ try{if(!demo)localStorage.setItem(STATE_KEY,JSON.stringify(next));}catch{}render();
 }
-function settingsMessage(message,error=false){
-  $('settingsFeedback').textContent=message;
-  $('settingsFeedback').className='note'+(error?' error':'');
+function render(){
+ const s=state||{};setText('temperature',fmt(s.temperature));setText('outdoor',fmt(s.outdoor_temperature));setText('roomTemp',fmt(s.temperature));setText('manualRoom',fmt(s.temperature));setText('manualTarget',fmt(s.manual_setpoint));setText('activeTarget',fmt(s.boiler_setpoint));
+ setText('boilerState',s.boiler_on?'Працює':s.boiler_on===false?'Вимкнено':'—');setText('manualBoiler',$('boilerState').textContent);setText('boilerMode',modeName(state));setText('homeMode',modeName(state));setText('homeTarget',fmt(s.boiler_setpoint));setText('homeWifi',s.wifi_ssid||'Немає мережі');
+ setText('manualNote',!extended()&&s.vacation?'Під час «Відпустки» ручна уставка змінюється через шлюз. Режим не перемикається.':'Крок 0,5 °C. Зміна температури не перемикає режим.');
+ qa('[data-heat]').forEach(n=>{n.classList.toggle('is-selected',HEAT_BUTTONS.indexOf(n.dataset.heat)===s.heating_selected_command);n.setAttribute('aria-pressed',String(HEAT_BUTTONS.indexOf(n.dataset.heat)===s.heating_selected_command));});
+ setText('rainState',!state?'Немає даних':s.rain_blocked?'🌧 Полив заблоковано захистом від дощу':s.rain?'🌧 Датчик фіксує дощ':'☀️ Захист від дощу не блокує полив');
+ setText('waterState',s.watering?(s.watering_all?'Працює полив усіх зон':`Працює зона ${s.watering_zone}`):'Полив зупинено');
+ setText('lightState',s.lights?.[0]?'Світло ввімкнено':s.lights?'Світло вимкнено':'Немає даних');
+ $('gateCards').innerHTML=(s.gates||[]).map((g,i)=>`<div class="panel"><div class="row"><h3>${e(g.name)}</h3><span class="badge">${g.reeds_enabled?'Геркони ввімкнено':'Без герконів'}</span></div><div class="gate-state ${!g.reeds_enabled?'calculated':''} ${g.state===5?'error':''}">${e(gateDescription(g))}</div><div class="two"><button data-gate="${i}" data-cmd="open" data-control ${!g.open_allowed?'data-unavailable="1"':''}>Відкрити</button><button data-gate="${i}" data-cmd="close" data-control ${!g.close_allowed?'data-unavailable="1"':''}>Закрити</button></div><button class="gate-settings-link" data-gate-settings="${i}">⚙️ Налаштування цих воріт ›</button></div>`).join('')||'<div class="panel empty">Підключіться, щоб побачити стан воріт.</div>';
+ $('sensorCards').innerHTML=`<div class="panel sensor-grid">${(s.xiaomi_sensors||[]).map((x,i)=>`<div><h4>${e(x.name||'Датчик '+(i+1))}</h4><div class="sensor-number">${fmt(x.temperature)}</div><p class="note">${x.enabled?(x.online?'Онлайн':'Немає свіжих даних'):'Вимкнено'}<br>Вологість ${typeof x.humidity==='number'?Math.round(x.humidity)+'%':'—'} · Батарея ${typeof x.battery==='number'?x.battery+'%':'—'}<br>RSSI ${typeof x.rssi==='number'?x.rssi+' dBm':'—'}</p></div>`).join('')||'<p class="note">Очікування даних датчиків.</p>'}</div>`;
+ const details=[['ESP32',fresh()?'Є свіжі дані':'Немає свіжих даних'],['Прошивка',s.firmware||'—'],['IP-адреса',s.ip||'—'],['Wi-Fi',s.wifi_ssid||'—'],['Сигнал',typeof s.wifi_rssi==='number'?s.wifi_rssi+' dBm':'—'],['Джерело тепла',s.temperature_source||'—'],['Час роботи',s.uptime_s!=null?Math.floor(s.uptime_s/3600)+' год '+Math.floor(s.uptime_s%3600/60)+' хв':'—'],['Вільна пам’ять',s.free_heap!=null?Math.round(s.free_heap/1024)+' КБ':'—'],['Час NTP',s.time_synced?'Синхронізовано':'Не синхронізовано'],['HomeSpan',s.homespan_available?'Вбудовано':'—']];
+ $('deviceDetails').innerHTML=details.map(([k,v])=>`<div>${e(k)}<b>${e(v)}</b></div>`).join('');
+ setText('homekitState',s.homekit_mode===1?(s.homekit_started?'HomeSpan запущено':'HomeSpan очікує Wi-Fi'):s.homekit_mode===2?'Через Home Assistant / MQTT':'Вимкнено');
+ if(s.ip&&/^\d{1,3}(\.\d{1,3}){3}$/.test(s.ip)){$('localPanel').href='http://'+s.ip+'/';$('localPanel').removeAttribute('aria-disabled');}else $('localPanel').setAttribute('aria-disabled','true');
+ renderHealth();renderChart();
 }
-function restoreConnectionSettings(){
-  try{
-    const raw=localStorage.getItem(SETTINGS_KEY);
-    if(!raw)return;
-    $('forgetSettings').hidden=false;
-    const saved=JSON.parse(raw);
-    if(!validConnectionSettings(saved))throw new Error('Invalid saved settings');
-    $('broker').value=saved.broker;
-    $('username').value=saved.username;
-    $('password').value=saved.password;
-    restoredSettings=true;
-    settingsMessage('Збережені налаштування відновлено. Підключаємося автоматично…');
-  }catch{settingsMessage('Не вдалося прочитати збережені налаштування. Введіть їх вручну.',true);}
+function renderHealth(){
+ const connected=demo||transport.connected,live=fresh();setText('connection',demo?'Демонстрація':connected?(live?'MQTT · ESP32 онлайн':'MQTT · очікування ESP32'):'MQTT не підключено');$('connection').className='pill '+(live?'good':'bad');$('stale').hidden=live;
+ const received=demo?demoReceived:transport.received;setText('lastSeen',received?'Оновлено '+new Date(received).toLocaleTimeString('uk-UA'):'Очікування свіжих даних');
+ qa('[data-control]').forEach(n=>n.disabled=!live||busy||n.dataset.unavailable==='1');qa('[data-extended]').forEach(n=>n.disabled=!extended()||busy);
+ qa('[data-gateway-form]').forEach(f=>{const unavailable=!extended();f.dataset.unavailable=String(unavailable);qa('input,select,textarea',f).forEach(n=>n.disabled=unavailable||busy);});
+ $('tempDown').disabled=!live||busy||(!extended()&&state?.vacation)||!(state?.manual_setpoint>5);$('tempUp').disabled=!live||busy||(!extended()&&state?.vacation)||!(state?.manual_setpoint<30);
+ if(state?.rain_blocked)qa('[data-zone],[data-water-all]').forEach(n=>n.disabled=true);
+ qa('.gateway-note').forEach(n=>n.textContent=extended()?'':'Для збереження потрібен локальний шлюз. Основне керування через MQTT працює без нього.');
+ setText('gatewayStatus',extended()?'Шлюз підключений: усі налаштування доступні.':transport.gateway?'Шлюз знайдено, очікуємо дані контролера.':'Шлюз не підключений. Доступне основне MQTT-керування.');
+ $('disconnect').disabled=!connected&&!transport.client;document.body.dataset.live=String(live);
 }
-function persistConnectionSettings(settings){
-  if(!validConnectionSettings(settings)){settingsMessage('Введіть коректну WSS-адресу, користувача та пароль.',true);return false;}
-  try{
-    const serialized=JSON.stringify(settings);
-    localStorage.setItem(SETTINGS_KEY,serialized);
-    if(localStorage.getItem(SETTINGS_KEY)!==serialized)throw new Error('Storage verification failed');
-    $('forgetSettings').hidden=false;
-    settingsMessage('Адресу, користувача та пароль збережено. Наступного разу вони підставляться автоматично.');
-    return true;
-  }catch{settingsMessage('Підключення можливе, але браузер не зберіг пароль. Перевірте дозвіл на збереження даних цього сайту.',true);return false;}
+function renderChart(){const samples=history.filter(x=>Number.isFinite(x.value));if(samples.length<2){$('temperatureChart').replaceChildren();return;}const values=samples.map(x=>x.value),min=Math.min(...values)-.2,max=Math.max(...values)+.2,t0=samples[0].at,dt=Math.max(1,samples.at(-1).at-t0);$('temperatureChart').innerHTML=`<polyline points="${samples.map(p=>`${20+(p.at-t0)/dt*500},${84-(p.value-min)/(max-min)*65}`).join(' ')}"/><text x="20" y="13">${max.toFixed(1)} °C</text><text x="20" y="99">${new Date(t0).toLocaleTimeString('uk-UA',{hour:'2-digit',minute:'2-digit'})}</text><text x="470" y="99">${new Date(samples.at(-1).at).toLocaleTimeString('uk-UA',{hour:'2-digit',minute:'2-digit'})}</text>`;setText('chartNote',`${samples.length} свіжих вимірювань · ${min.toFixed(1)}–${max.toFixed(1)} °C`);}
+async function run(op,args={},label='Зміни',button){
+ if(busy)return;busy=true;button?.classList.add('is-pending');renderHealth();
+ try{
+  let result;if(demo){await new Promise(r=>setTimeout(r,350));result=applyDemo(state,config,op,args);acceptState(result.state);populateForms();}else{result=await transport.command(op,args);if(result?.state)acceptState(result.state);if(result?.config){config=result.config;configLoaded=true;populateForms();}}
+  log(label+' — підтверджено контролером'+(demo?' (демо)':''));toast(label+' — підтверджено');return result??true;
+ }catch(err){toast(err.message,true);log(label+' — '+err.message);return false;}finally{busy=false;button?.classList.remove('is-pending');renderHealth();}
 }
-$('saveSettings').addEventListener('click',()=>{
-  settingsRevision++;
-  persistConnectionSettings({version:1,broker:$('broker').value.trim(),username:$('username').value.trim(),password:$('password').value});
+function confirmAction(title,text,needPin=false){return new Promise(resolve=>{const dialog=$('confirmDialog');setText('confirmTitle',title);setText('confirmText',text);$('pinLabel').hidden=!needPin;$('gatePin').value='';dialog.returnValue='cancel';dialog.addEventListener('close',()=>resolve(dialog.returnValue==='ok'?{pin:$('gatePin').value}:null),{once:true});dialog.showModal();});}
+function fillForm(id,values,force=false){const f=$(id);if(!force&&f.dataset.dirty==='1')return;for(const [key,value]of Object.entries(values||{})){const field=f.elements.namedItem(key);if(!field)continue;if(field.type==='checkbox')field.checked=!!value;else if(value!=null)field.value=String(value);}if(force)f.dataset.dirty='0';}
+function days(container,values){qa('input',$(container)).forEach(n=>n.checked=(values||[]).includes(Number(n.value)));}
+function populateForms(force=false){
+ if(!state)return;
+ fillForm('vacationForm',{vacTemp:state.vacation_temperature},force);fillForm('homekitForm',{mode:state.homekit_mode},force);
+ if(!config)return;
+ fillForm('autoForm',config.heat,force);fillForm('rainForm',config.rain,force);fillForm('extraForm',{enabled:config.extra},force);fillForm('memoForm',{text:config.memo},force);fillForm('wifiForm',{ssid:config.ssid,password:secrets.get(secretScope(),'wifi:'+config.ssid)},force);
+ const zone=Number($('scheduleZone').value),wc=config.water?.[zone];if(wc){fillForm('waterForm',wc,force);if(force||$('waterForm').dataset.dirty!=='1')days('waterDays',wc.days);}
+ if(config.light){fillForm('lightForm',config.light,force);if(force||$('lightForm').dataset.dirty!=='1')days('lightDays',config.light.days);}
+ if(force||$('sensorForm').dataset.dirty!=='1'){
+  $('sensorFields').innerHTML=Array.from({length:4},(_,i)=>{const x=state.xiaomi_sensors?.[i]||{};return `<div class="sensor-editor"><h4>Датчик ${i+1}</h4><label class="check"><input type="checkbox" name="en${i}" ${x.enabled?'checked':''}> Використовувати</label><label>Назва кімнати<input name="name${i}" maxlength="32" value="${e(x.name||'Кімната '+(i+1))}"></label><label>MAC-адреса<input name="mac${i}" placeholder="AA:BB:CC:DD:EE:FF" pattern="(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}" value="${e(x.mac||'')}"></label></div>`;}).join('');fillForm('sensorForm',{source:state.xiaomi_heating_source},force);
+ }
+ renderHealth();
+}
+function formValues(id){const form=$(id),out={};for(const n of form.elements)if(n.name&&!n.disabled)out[n.name]=n.type==='checkbox'?n.checked:n.value;return out;}
+function checkedDays(container){return qa('input:checked',$(container)).map(n=>Number(n.value));}
+function openGateSettings(index){activeGate=index;const g=state?.gates[index];if(!g)return;setText('gateSettingsTitle','⚙️ '+g.name);fillForm('gateForm',{name:g.name,pinEnabled:g.pin_required,reedsEnabled:g.reeds_enabled,pulseMs:g.pulse_ms,newPin:''},true);setText('gatePins',index===0?'Геркони: GPIO15 — відкрито; GPIO16 — закрито.':'Геркони: GPIO17 — відкрито; GPIO18 — закрито.');nav('gate-settings');}
+document.addEventListener('click',async ev=>{
+ const button=ev.target.closest('button');if(!button)return;
+ if(button.dataset.heat){await run('heat.mode',{command:button.dataset.heat},'Режим опалення',button);}
+ else if(button.dataset.light){await run('light.set',{on:button.dataset.light==='on'},'Освітлення',button);}
+ else if(button.dataset.zone){await run('water.start',{zone:Number(button.dataset.zone)},'Запуск поливу зони '+button.dataset.zone,button);}
+ else if(button.dataset.waterAll){if(await confirmAction('Полив усіх зон','Запустити всі зони '+(button.dataset.waterAll==='all'?'послідовно?':'одночасно?')))await run('water.all',{action:button.dataset.waterAll},'Полив усіх зон',button);}
+ else if(button.dataset.gateSettings!==undefined)openGateSettings(Number(button.dataset.gateSettings));
+ else if(button.dataset.gate!==undefined){
+  const gate=Number(button.dataset.gate),g=state.gates[gate],cmd=button.dataset.cmd,cached=demo?'':secrets.get(secretScope(),'gate:'+gate);
+  const result=await confirmAction((cmd==='open'?'Відкрити':'Закрити')+' — '+g.name,extended()?'Команда подасть імпульс на реле воріт.'+(g.pin_required?(cached?' Використаємо збережений PIN.':' Введений PIN буде збережений на цьому пристрої.'):''):'MQTT-команда подасть імпульс на реле. Авторизація — обліковий запис брокера; локальний PIN прошивки в цьому каналі не перевіряється.',extended()&&g.pin_required&&!cached);
+  if(result){const pin=cached||result.pin;const ok=await run('gate.command',{gate,command:cmd,pin},'Команда воріт',button);if(ok&&extended()&&pin)rememberSecret('gate:'+gate,pin);if(!ok&&cached)rememberSecret('gate:'+gate,'');}
+ }
 });
-$('forgetSettings').addEventListener('click',()=>{
-  settingsRevision++;
-  try{
-    localStorage.removeItem(SETTINGS_KEY);
-    if(localStorage.getItem(SETTINGS_KEY)!==null)throw new Error('Removal failed');
-    $('forgetSettings').hidden=true;
-    $('password').value='';
-    settingsMessage('Збережені дані видалено. Поточне підключення не змінено.');
-  }catch{settingsMessage('Не вдалося видалити збережені дані. Спробуйте очистити дані сайту в браузері.',true);}
-});
-for(const id of ['broker','username','password'])$(id).addEventListener('input',()=>{settingsRevision++;settingsMessage('Зміни збережуться після успішного підключення або кнопкою «Зберегти налаштування».');});
-restoreConnectionSettings();
-// END SAVED CONNECTION SETTINGS V19
-
-const log=s=>{const line=document.createElement('div');line.textContent=new Date().toLocaleTimeString('uk-UA')+' · '+s;$('log').prepend(line);while($('log').children.length>80)$('log').lastElementChild.remove()};
-const note=(s,cls='')=>{$('tempFeedback').textContent=s;$('tempFeedback').className='note '+cls;log(s)};
-const connected=()=>Boolean(client?.connected);
-const live=()=>connected()&&state&&availability==='online'&&Date.now()-lastStateAt<90000;
-function nav(id){document.querySelectorAll('.page').forEach(el=>el.classList.toggle('active',el.id===id));window.scrollTo(0,0)}
-document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>nav(b.dataset.go)));
-setInterval(()=>{$('headerClock').textContent=$('clock').textContent},1000);$('today').textContent=new Date().toLocaleDateString('uk-UA');setInterval(()=>$('clock').textContent=new Date().toLocaleTimeString('uk-UA',{hour:'2-digit',minute:'2-digit'}),1000);$('clock').textContent=new Date().toLocaleTimeString('uk-UA',{hour:'2-digit',minute:'2-digit'});
-function renderSetpointIndicators(s,ok){
-  const hasActual=typeof s.boiler_setpoint==='number'&&Number.isFinite(s.boiler_setpoint);
-  $('actualSetpoint').textContent=fmt(s.boiler_setpoint,' °C');
-  $('actualSetpointCard').className='setpoint-card '+(ok&&hasActual?'is-live':'is-stale');
-  $('actualSetpointStatus').textContent=!hasActual?'Немає даних від ESP32':
-    !ok?'Останнє отримане · дані неактуальні':
-    'Отримано о '+new Date(lastStateAt).toLocaleTimeString('uk-UA');
-  const target=desired??failedTarget;
-  $('pendingSetpoint').textContent=fmt(target,' °C');
-  $('pendingSetpointCard').className='setpoint-card '+(desired!==null?'is-waiting':failedTarget!==null?'is-failed':'is-idle');
-  $('pendingSetpointStatus').textContent=desired!==null?
-    (connected()?'Очікуємо відповідь ESP32…':'Зв’язок втрачено · підтвердження немає'):
-    failedTarget!==null?'Не підтверджено · можна повторити':'Немає команди в очікуванні';
+$('tempDown').addEventListener('click',()=>run('heat.manual',{value:halfDegree(state.manual_setpoint-.5)},'Ручна температура',$('tempDown')));
+$('tempUp').addEventListener('click',()=>run('heat.manual',{value:halfDegree(state.manual_setpoint+.5)},'Ручна температура',$('tempUp')));
+$('stopWater').addEventListener('click',()=>run('water.stop',{},'Полив зупинено',$('stopWater')));
+$('zones').innerHTML=Array.from({length:4},(_,i)=>`<button data-zone="${i+1}" data-control>▶ Зона ${i+1}</button>`).join('');
+for(const [container,prefix]of [['waterDays','wd'],['lightDays','ld']])$(container).innerHTML=['Нд','Пн','Вт','Ср','Чт','Пт','Сб'].map((label,i)=>`<label for="${prefix+i}">${label}<input id="${prefix+i}" type="checkbox" value="${i}" aria-label="${label}"></label>`).join('');
+qa('[data-gateway-form]').forEach(f=>{f.addEventListener('input',()=>f.dataset.dirty='1');f.addEventListener('change',()=>f.dataset.dirty='1');});
+$('scheduleZone').addEventListener('change',()=>{$('waterForm').dataset.dirty='0';populateForms();});
+function bindSave(id,op,read,label){$(id).addEventListener('submit',async ev=>{ev.preventDefault();if(!extended())return toast('Потрібен підключений шлюз',true);const args=read();const result=await run(op,args,label,$(id).querySelector('button[type=submit]'));if(result){$(id).dataset.dirty='0';if(op==='gate.save'){if(args.newPin)rememberSecret('gate:'+args.gate,args.newPin);$('gateForm').elements.newPin.value='';}await refreshConfig();}});}
+bindSave('autoForm','heat.auto.save',()=>formValues('autoForm'),'Налаштування Авто');
+bindSave('vacationForm','heat.vacation.save',()=>formValues('vacationForm'),'Температура Відпустки');
+bindSave('gateForm','gate.save',()=>({gate:activeGate,...formValues('gateForm')}),'Налаштування воріт');
+bindSave('waterForm','water.save',()=>({zone:Number($('scheduleZone').value),config:{...formValues('waterForm'),days:checkedDays('waterDays')}}),'Розклад зони');
+bindSave('lightForm','light.save',()=>({...formValues('lightForm'),days:checkedDays('lightDays')}),'Розклад освітлення');
+bindSave('rainForm','rain.save',()=>formValues('rainForm'),'Захист від дощу');
+bindSave('extraForm','extra.save',()=>formValues('extraForm'),'DS18B20');
+bindSave('memoForm','memo.save',()=>formValues('memoForm'),'Пам’ятка');
+bindSave('sensorForm','sensors.save',()=>{const v=formValues('sensorForm');return {source:Number(v.source),sensors:Array.from({length:4},(_,i)=>({enabled:!!v['en'+i],name:v['name'+i],mac:v['mac'+i]}))};},'Налаштування датчиків');
+for(const [id,op,label]of [['homekitForm','homekit.save','HomeKit'],['wifiForm','wifi.save','Wi-Fi']])$(id).addEventListener('submit',async ev=>{ev.preventDefault();if(!extended())return;if(!await confirmAction('Зберегти '+label+'?','Контролер перезапуститься. MQTT-з’єднання тимчасово зникне.'))return;const values=formValues(id),ok=await run(op,values,label+' збережено — очікуємо перезапуск');if(ok){if(id==='wifiForm'&&values.password)rememberSecret('wifi:'+values.ssid,values.password);$(id).dataset.dirty='0';}});
+$ ('wifiForm').elements.ssid.addEventListener('input',ev=>{$('wifiForm').elements.password.value=secrets.get(secretScope(),'wifi:'+ev.target.value);});
+async function refreshConfig(){if(demo){populateForms(true);return;}if(!transport.gateway)return;try{const c=await transport.rpc('config.get');config=c;configLoaded=true;if(c.state)acceptState(c.state);populateForms();}catch(err){toast(err.message,true);}}
+$('refreshConfig').addEventListener('click',refreshConfig);
+transport.addEventListener('state',event=>acceptState(event.detail.state,event.detail.fresh));
+transport.addEventListener('config',event=>{config=event.detail;configLoaded=true;if(config.state)acceptState(config.state);populateForms();});
+transport.addEventListener('health',renderHealth);
+transport.addEventListener('error',event=>{setText('connectionError',event.detail);toast(event.detail,true);});
+transport.addEventListener('reconnect',()=>setText('connectionError','Відновлюємо MQTT-з’єднання…'));
+let connectionCandidate=null;
+transport.addEventListener('connection',()=>{setText('connectionError','');if(connectionCandidate){try{const v=connectionCandidate;if(v.remember)localStorage.setItem(STORAGE,JSON.stringify({version:1,broker:v.url,username:v.username,password:v.password,base:v.base}));else localStorage.removeItem(STORAGE);}catch{toast('Браузер не дозволив зберегти підключення',true);}}log('З’єднання з MQTT-брокером встановлено');});
+$('connectionForm').addEventListener('submit',ev=>{ev.preventDefault();try{const values=validateConnection(formValues('connectionForm'));demo=false;$('demoBanner').hidden=true;manuallyDisconnected=false;connectionCandidate=values;transport.connect(values);toast('Підключаємося до брокера…');}catch(err){setText('connectionError',err.message);}});
+$('disconnect').addEventListener('click',()=>{manuallyDisconnected=true;transport.disconnect();toast('Відключено. Автопідключення призупинене до наступного відкриття.');});
+$('forgetSettings').addEventListener('click',()=>{try{localStorage.removeItem(STORAGE);secrets.clear();$('password').value='';$('wifiForm').elements.password.value='';connectionCandidate=null;toast('Збережені паролі та PIN видалено з цього пристрою');}catch{toast('Не вдалося видалити дані браузера',true);}});
+$('clearLog').addEventListener('click',()=>{logs=[];localStorage.removeItem(LOG_KEY);renderLog();});
+$('exportLog').addEventListener('click',()=>{const link=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(logs,null,2)],{type:'application/json'}));link.href=url;link.download='garden-events.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
+$('enterDemo').addEventListener('click',()=>{transport.disconnect();demo=true;startDemo();nav('home');});
+$('leaveDemo').addEventListener('click',()=>{demo=false;$('demoBanner').hidden=true;state=null;config=null;configLoaded=false;render();nav('settings');});
+function startDemo(){demo=true;state=demoState();config=demoConfig();configLoaded=true;$('demoBanner').hidden=false;acceptState(state);populateForms(true);}
+window.addEventListener('beforeinstallprompt',ev=>{ev.preventDefault();installPrompt=ev;});
+$('installApp').addEventListener('click',async()=>{if(installPrompt){await installPrompt.prompt();installPrompt=null;}else toast('Safari: Поділитися → На початковий екран. Android: меню → Встановити додаток.');});
+$('applyUpdate').addEventListener('click',async()=>{if(busy)return toast('Дочекайтеся підтвердження поточної дії',true);transport.disconnect();waitingWorker?.postMessage({type:'SKIP_WAITING'});});
+if('serviceWorker'in navigator){let refreshing=false;const hadController=!!navigator.serviceWorker.controller;navigator.serviceWorker.addEventListener('controllerchange',()=>{if(hadController&&!refreshing){refreshing=true;location.reload();}});window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js',{scope:'./'}).then(reg=>{if(reg.waiting){waitingWorker=reg.waiting;$('updateBanner').hidden=false;}reg.addEventListener('updatefound',()=>{const worker=reg.installing;worker.addEventListener('statechange',()=>{if(worker.state==='installed'&&navigator.serviceWorker.controller){waitingWorker=reg.waiting;$('updateBanner').hidden=false;}});});}).catch(()=>toast('Офлайн-кеш недоступний. Відкрийте сайт через HTTPS або localhost.',true)));}
+window.addEventListener('online',()=>{if(!manuallyDisconnected&&transport.client&&!transport.client.connected)transport.client.reconnect();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){renderHealth();if(!manuallyDisconnected&&transport.client&&!transport.client.connected)transport.client.reconnect();}});
+function tick(){const now=new Date(),opts={timeZone:'Europe/Kyiv',hour:'2-digit',minute:'2-digit'};setText('clock',now.toLocaleTimeString('uk-UA',opts));setText('headerClock',now.toLocaleTimeString('uk-UA',opts));setText('today',now.toLocaleDateString('uk-UA',{timeZone:'Europe/Kyiv',day:'numeric',month:'long',weekday:'short'}));renderHealth();}
+try{logs=JSON.parse(localStorage.getItem(LOG_KEY)||'[]').slice(0,150);const cached=localStorage.getItem(STATE_KEY);if(cached)state=parseDeviceState(cached);}catch{}
+renderLog();nav(location.hash.slice(1)||'home',true);
+if(demo)startDemo();else{
+ try{const saved=JSON.parse(localStorage.getItem(STORAGE)||'null');if(saved&&saved.version===1){const c=validateConnection({url:saved.broker,username:saved.username,password:saved.password,base:saved.base||'garden/controller',remember:true});fillForm('connectionForm',c);$('broker').value=c.url;connectionCandidate=c;transport.connect(c);}else nav('settings');}catch{nav('settings');toast('Перевірте збережені налаштування MQTT',true);}
+ render();
 }
-function render(){const ok=live(),s=state||{},mode={0:'OFF',1:'MANUAL',2:'AUTO'}[s.boiler_mode]||'—';$('connection').textContent=connected()?'MQTT підключено':'MQTT не підключено';$('connection').className='pill '+(connected()?'good':'bad');$('lastSeen').textContent=lastStateAt?'Оновлено '+new Date(lastStateAt).toLocaleTimeString('uk-UA'):'Немає даних';$('stale').classList.toggle('hidden',Boolean(ok));$('connect').disabled=Boolean(client);$('disconnect').disabled=!client;$('temperature').textContent=fmt(s.temperature,' °C');$('homeTemp').textContent=fmt(s.temperature,' °C');$('roomTemp').textContent=fmt(s.temperature,' °C');renderOutdoor();$('humidity').textContent=fmt(s.xiaomi_humidity,' %');$('boilerState').textContent=typeof s.boiler_on==='boolean'?(s.boiler_on?'Увімкнено':'Вимкнено'):'—';$('homeBoiler').textContent=s.boiler_on?'Котел увімкнено':'Котел вимкнено';$('boilerMode').textContent=mode;$('homeWifi').textContent=availability==='online'?'ESP32 онлайн':'ESP32 офлайн';$('setpoint').textContent=fmt(desired??failedTarget??s.boiler_setpoint,' °C');renderSetpointIndicators(s,ok);$('retrySetpoint').hidden=failedTarget===null;$('discardSetpoint').hidden=failedTarget===null;$('retrySetpoint').disabled=!ok||desired!==null||s.vacation===true;$('vacationNotice').hidden=s.vacation!==true;$('tempDown').disabled=!ok||desired!==null||s.vacation===true;$('tempUp').disabled=!ok||desired!==null||s.vacation===true;$('resetSchedule').disabled=!ok||desired!==null;document.querySelectorAll('[data-mode]').forEach(b=>b.disabled=!ok||desired!==null);$('stopWater').disabled=!connected();$('waterState').textContent=s.watering?'Полив активний · зона '+(s.watering_zone||'—'):'Полив вимкнений';$('rain').textContent=s.rain_blocked?'⚠️ Полив заблокований через дощ':'Полив дозволений';$('availability').textContent=availability;$('firmware').textContent=s.firmware||'—';$('ip').textContent=s.ip||'—';$('battery').textContent=typeof s.xiaomi_battery==='number'?s.xiaomi_battery+' %':'—';$('sensorName').textContent=s.xiaomi_sensors?.[0]?.name||s.temperature_source||'Xiaomi';$('updatedAt').textContent=lastStateAt?new Date(lastStateAt).toLocaleTimeString('uk-UA'):'—';document.querySelectorAll('[data-light]').forEach(b=>{const i=Number(b.dataset.light)-1,on=s.lights?.[i]===true;b.classList.toggle('active',on);b.textContent='💡 Світло '+(i+1)+' · '+(on?'УВІМКНЕНО':'ВИМКНЕНО');b.disabled=!ok});document.querySelectorAll('[data-zone]').forEach(b=>{const i=Number(b.dataset.zone);b.classList.toggle('active',Boolean(s.watering&&s.watering_zone===i));b.disabled=!ok||s.rain_blocked===true});}
-function clearPending(){if(commandTimeout)clearTimeout(commandTimeout);commandTimeout=null;desired=null;commandAt=0;}
-function send(path,payload,label){if(!live()){log('Команду не надіслано: немає актуального стану ESP32');return false;}client.publish(BASE+'/'+path,String(payload),{qos:0,retain:false},err=>log(err?'Помилка '+label+': '+err.message:'Надіслано '+label+' (очікуємо підтвердження станом ESP32)'));return true;}
-function submitSetpoint(next){
-  if(!live()||desired!==null||state.vacation===true)return;
-  if(!Number.isFinite(next)||next<5||next>30){note('Допустимий діапазон 5–30 °C','error');return;}
-  failedTarget=null;
-  desired=next;
-  commandAt=Date.now();
-  const attempt=++setpointAttempt;
-  const session=connectionId;
-  function fail(message){
-    if(attempt!==setpointAttempt||session!==connectionId||desired!==next)return;
-    clearPending();
-    failedTarget=next;
-    note(message+' Вибрано '+next.toFixed(1)+' °C, але виконання НЕ підтверджено.','error');
-    render();
-  }
-  note('Вибрано '+next.toFixed(1)+' °C · очікуємо підтвердження ESP32…','waiting');
-  render();
-  commandTimeout=setTimeout(()=>fail('ESP32 не відповіла за 18 секунд.'),18000);
-  try{
-    client.publish(BASE+'/boiler/setpoint/set',next.toFixed(1),{qos:0,retain:false},err=>{
-      if(attempt!==setpointAttempt||session!==connectionId||desired!==next)return;
-      if(err){fail('Помилка надсилання: '+err.message);return;}
-      log('Команду '+next.toFixed(1)+' °C надіслано брокеру; чекаємо фактичну уставку ESP32');
-    });
-  }catch(error){fail('Помилка надсилання: '+error.message);}
-}
-function adjust(delta){
-  const old=desired??failedTarget??state?.boiler_setpoint;
-  if(old===null||old===undefined||!Number.isFinite(Number(old)))return;
-  submitSetpoint(Math.round((Number(old)+delta)*2)/2);
-}
-function process(topic,payload,packet={}){if(topic===BASE+'/availability'){availability=payload.trim().toLowerCase();log('ESP32: '+availability);render();return;}if(topic===BASE+'/state'){let obj;try{obj=JSON.parse(payload);if(!obj||typeof obj.boiler_on!=='boolean')return;}catch(e){log('Помилка JSON стану');return;}state=obj;lastStateAt=Date.now();if((desired!==null||failedTarget!==null)&&packet.retain!==true&&obj.vacation!==true&&typeof obj.boiler_setpoint==='number'&&Math.abs(obj.boiler_setpoint-(desired??failedTarget))<0.05){const target=desired??failedTarget;clearPending();failedTarget=null;confirmedAt=Date.now();note('ESP32 підтвердила уставку '+target.toFixed(1)+' °C.','');}else if(desired!==null){log('Очікуємо '+desired.toFixed(1)+' °C, ESP32 повідомляє '+fmt(obj.boiler_setpoint,' °C'));}render();return;}if(topic.startsWith(BASE+'/'))log(topic.slice(BASE.length+1)+': '+payload.slice(0,120));}
-function disconnect(){resumeAfterPageHide=false;connectionId++;if(client){const c=client;client=null;c.end(true)}clearPending();failedTarget=null;state=null;availability='unknown';lastStateAt=0;render()}
-function connectMqtt(){if(client)return;if(!window.mqtt){$('error').textContent='Бібліотека MQTT не завантажена';return;}const url=$('broker').value.trim(),username=$('username').value.trim(),password=$('password').value;if(!/^wss:\/\//.test(url)||!username||!password){$('error').textContent='Заповніть WSS, користувача і пароль';return;}$('error').textContent='';const revisionAtConnect=settingsRevision;const settingsAtConnect={version:1,broker:url,username,password};let firstConnect=true;if(client)client.end(true);const id=++connectionId;state=null;lastStateAt=0;availability='unknown';clearPending();failedTarget=null;const c=mqtt.connect(url,{username,password,clientId:'staromiska_v11_'+Math.random().toString(16).slice(2,12),clean:true,connectTimeout:12000,reconnectPeriod:4000,protocolVersion:4});client=c;c.on('connect',()=>{if(id!==connectionId)return;if(firstConnect){firstConnect=false;if(settingsRevision===revisionAtConnect)persistConnectionSettings(settingsAtConnect);}log('MQTT підключено');c.subscribe(BASE+'/#',{qos:0},err=>{if(err)$('error').textContent='Помилка підписки: '+err.message});nav('home');render()});c.on('message',(t,b,packet)=>{if(id===connectionId)process(t,b.toString(),packet)});c.on('close',()=>{if(id!==connectionId)return;availability='unknown';render()});c.on('error',err=>{if(id!==connectionId)return;$('error').textContent='MQTT: '+err.message;render()});render()}
-$('connect').addEventListener('click',connectMqtt);$('disconnect').addEventListener('click',disconnect);
-for(let i=1;i<=3;i++){const b=document.createElement('button');b.dataset.light=i;b.disabled=true;b.addEventListener('click',()=>{const on=state?.lights?.[i-1]===true;send('light/'+i+'/set',on?'OFF':'ON','Світло '+i+' '+(on?'OFF':'ON'))});$('lightsGrid').append(b)}
-for(let i=1;i<=4;i++){const b=document.createElement('button');b.dataset.zone=i;b.textContent='Зона '+i+' — 1 хв';b.disabled=true;b.addEventListener('click',()=>{if(!live())return;if(!window.confirm('Запустити полив зони '+i+'?'))return;send('water/'+i+'/set','START','Полив зони '+i)});$('zones').append(b)}
-$('stopWater').addEventListener('click',()=>{if(!connected())return;client.publish(BASE+'/water/stop/set','STOP',{qos:0,retain:false},err=>log(err?'STOP: '+err.message:'STOP надіслано · очікуємо стан ESP32'))});
-$('retrySetpoint').addEventListener('click',()=>{if(failedTarget!==null)submitSetpoint(failedTarget)});$('discardSetpoint').addEventListener('click',()=>{failedTarget=null;note('Показано останню уставку ESP32. Команду скасування контролеру не надсилали.');render()});
-$('tempDown').addEventListener('click',()=>adjust(-0.5));$('tempUp').addEventListener('click',()=>adjust(0.5));
-document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>{const m=b.dataset.mode;if(m==='OFF'&&!window.confirm('Вимкнути опалення?'))return;send('boiler/mode/set',m,'Режим котла '+m)}));$('resetSchedule').addEventListener('click',()=>{if(send('boiler/setpoint/reset','RESET','Повернути розклад')){failedTarget=null;render()}});$('clearLog').addEventListener('click',()=>$('log').replaceChildren());
-refreshOutdoorWeather();setInterval(refreshOutdoorWeather,600000);window.addEventListener('online',refreshOutdoorWeather);setInterval(render,5000);window.addEventListener('pagehide',()=>{
-  resumeAfterPageHide=Boolean(client);
-  if(client){const previous=client;client=null;connectionId++;previous.end(true);}
-});
-window.addEventListener('pageshow',event=>{
-  if(event.persisted&&resumeAfterPageHide){resumeAfterPageHide=false;connectMqtt();}
-});
-render();
-if(restoredSettings){connectMqtt();}else{nav('settings');}
-
-})();
+tick();setInterval(tick,1000);

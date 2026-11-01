@@ -1,0 +1,8 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile,access} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+const root=new URL('../public/',import.meta.url);
+test('all navigation targets and static UI bindings exist',async()=>{const html=await readFile(new URL('index.html',root),'utf8'),app=await readFile(new URL('app.js',root),'utf8'),ids=new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]));for(const [,id]of app.matchAll(/\$\('([^']+)'\)/g))assert.ok(ids.has(id),'Missing ID '+id);for(const [,target]of html.matchAll(/data-go="([^"]+)"/g))assert.ok(ids.has(target),'Missing page '+target);assert.equal((html.match(/data-heat=/g)||[]).length,7);const manual=html.slice(html.indexOf('<section id="manual"'),html.indexOf('<section id="auto"'));assert.ok(!manual.includes('data-heat'));assert.ok(manual.includes('id="tempDown"'));assert.ok(manual.includes('id="tempUp"'));});
+test('manifest icons and all static resources are local and present',async()=>{const manifest=JSON.parse(await readFile(new URL('manifest.webmanifest',root),'utf8'));assert.equal(manifest.scope,'./');assert.equal(manifest.start_url,'./');for(const icon of manifest.icons)await access(new URL(icon.src,root));const html=await readFile(new URL('index.html',root),'utf8');for(const [,resource]of html.matchAll(/(?:src|href)="([^"#]+)"/g)){if(!resource.includes('://'))await access(new URL(resource,root));}assert.ok(!/https?:\/\//.test(html));});
+test('bundled MQTT version hash matches recorded provenance',async()=>{const meta=JSON.parse(await readFile(new URL('vendor/version.json',root),'utf8'));const hash=createHash('sha256').update(await readFile(new URL('vendor/mqtt.min.js',root))).digest('hex');assert.equal(hash,meta.sha256);});
