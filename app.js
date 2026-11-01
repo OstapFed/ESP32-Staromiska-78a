@@ -1,3 +1,5 @@
+import {ActionLocks,actionResource} from './lib/actions.js';
+import {readConnection,writeConnection} from './lib/connection.js';
 import {LocalSecrets} from './lib/secrets.js';
 import {GardenTransport} from './lib/transport.js';
 import {HEAT_BUTTONS,escapeHTML as e,halfDegree,modeName,validateConnection,gateDescription,parseDeviceState} from './lib/protocol.js';
@@ -5,6 +7,7 @@ import {demoState,demoConfig,applyDemo} from './lib/demo.js';
 
 const $=id=>document.getElementById(id),qa=(s,r=document)=>[...r.querySelectorAll(s)];
 const STORAGE='staromiska78a.connection.v1',LOG_KEY='staromiska78a.pwa.log.v22',STATE_KEY='staromiska78a.pwa.state.v22';
+const locks=new ActionLocks();
 const transport=new GardenTransport();let state=null,config=null,activeGate=0,busy=false,configLoaded=false,installPrompt=null,waitingWorker=null,manuallyDisconnected=false;
 const secrets=new LocalSecrets(),secretScope=()=>transport.config?transport.config.url+'|'+transport.config.base:'demo';
 function rememberSecret(key,value){if(demo)return;try{secrets.set(secretScope(),key,value);}catch{toast('Браузер не дозволив зберегти пароль',true);}}
@@ -49,9 +52,10 @@ function render(){
 function renderHealth(){
  const connected=demo||transport.connected,live=fresh();setText('connection',demo?'Демонстрація':connected?(live?'MQTT · ESP32 онлайн':'MQTT · очікування ESP32'):'MQTT не підключено');$('connection').className='pill '+(live?'good':'bad');$('stale').hidden=live;
  const received=demo?demoReceived:transport.received;setText('lastSeen',received?'Оновлено '+new Date(received).toLocaleTimeString('uk-UA'):'Очікування свіжих даних');
- qa('[data-control]').forEach(n=>n.disabled=!live||busy||n.dataset.unavailable==='1');qa('[data-extended]').forEach(n=>n.disabled=!extended()||busy);
- qa('[data-gateway-form]').forEach(f=>{const unavailable=!extended();f.dataset.unavailable=String(unavailable);qa('input,select,textarea',f).forEach(n=>n.disabled=unavailable||busy);});
- $('tempDown').disabled=!live||busy||(!extended()&&state?.vacation)||!(state?.manual_setpoint>5);$('tempUp').disabled=!live||busy||(!extended()&&state?.vacation)||!(state?.manual_setpoint<30);
+ qa('[data-control]').forEach(n=>{const key=n.dataset.gate!==undefined?'gate:'+n.dataset.gate:'controller';n.disabled=!live||locks.has(key)||n.dataset.unavailable==='1';n.classList.toggle('is-pending',locks.has(key));});qa('[data-extended]').forEach(n=>n.disabled=!extended()||locks.has(n.form?.id==='gateForm'?'gate:'+activeGate:'controller'));
+ setText('waterAllNote',!state?.mqtt_water_all_supported&&!extended()?'Для цих двох команд через MQTT потрібна Garden_U V36.2. На V36.1 можна використати локальний шлюз.':'Керування всіма зонами доступне.');
+ qa('[data-gateway-form]').forEach(f=>{const unavailable=!extended(),formBusy=locks.has(f.id==='gateForm'?'gate:'+activeGate:'controller');f.dataset.unavailable=String(unavailable);qa('input,select,textarea',f).forEach(n=>n.disabled=unavailable||formBusy);});
+ $('tempDown').disabled=!live||locks.has('controller')||(!extended()&&state?.vacation)||!(state?.manual_setpoint>5);$('tempUp').disabled=!live||locks.has('controller')||(!extended()&&state?.vacation)||!(state?.manual_setpoint<30);
  if(state?.rain_blocked)qa('[data-zone],[data-water-all]').forEach(n=>n.disabled=true);
  qa('.gateway-note').forEach(n=>n.textContent=extended()?'':'Для збереження потрібен локальний шлюз. Основне керування через MQTT працює без нього.');
  setText('gatewayStatus',extended()?'Шлюз підключений: усі налаштування доступні.':transport.gateway?'Шлюз знайдено, очікуємо дані контролера.':'Шлюз не підключений. Доступне основне MQTT-керування.');
@@ -59,11 +63,11 @@ function renderHealth(){
 }
 function renderChart(){const samples=history.filter(x=>Number.isFinite(x.value));if(samples.length<2){$('temperatureChart').replaceChildren();return;}const values=samples.map(x=>x.value),min=Math.min(...values)-.2,max=Math.max(...values)+.2,t0=samples[0].at,dt=Math.max(1,samples.at(-1).at-t0);$('temperatureChart').innerHTML=`<polyline points="${samples.map(p=>`${20+(p.at-t0)/dt*500},${84-(p.value-min)/(max-min)*65}`).join(' ')}"/><text x="20" y="13">${max.toFixed(1)} °C</text><text x="20" y="99">${new Date(t0).toLocaleTimeString('uk-UA',{hour:'2-digit',minute:'2-digit'})}</text><text x="470" y="99">${new Date(samples.at(-1).at).toLocaleTimeString('uk-UA',{hour:'2-digit',minute:'2-digit'})}</text>`;setText('chartNote',`${samples.length} свіжих вимірювань · ${min.toFixed(1)}–${max.toFixed(1)} °C`);}
 async function run(op,args={},label='Зміни',button){
- if(busy)return;busy=true;button?.classList.add('is-pending');renderHealth();
+ const key=actionResource(op,args);if(!locks.acquire(key))return;busy=locks.busy;button?.classList.add('is-pending');renderHealth();
  try{
   let result;if(demo){await new Promise(r=>setTimeout(r,350));result=applyDemo(state,config,op,args);acceptState(result.state);populateForms();}else{result=await transport.command(op,args);if(result?.state)acceptState(result.state);if(result?.config){config=result.config;configLoaded=true;populateForms();}}
   log(label+' — підтверджено контролером'+(demo?' (демо)':''));toast(label+' — підтверджено');return result??true;
- }catch(err){toast(err.message,true);log(label+' — '+err.message);return false;}finally{busy=false;button?.classList.remove('is-pending');renderHealth();}
+ }catch(err){toast(err.message,true);log(label+' — '+err.message);return false;}finally{locks.release(key);busy=locks.busy;button?.classList.remove('is-pending');renderHealth();}
 }
 function confirmAction(title,text,needPin=false){return new Promise(resolve=>{const dialog=$('confirmDialog');setText('confirmTitle',title);setText('confirmText',text);$('pinLabel').hidden=!needPin;$('gatePin').value='';dialog.returnValue='cancel';dialog.addEventListener('close',()=>resolve(dialog.returnValue==='ok'?{pin:$('gatePin').value}:null),{once:true});dialog.showModal();});}
 function fillForm(id,values,force=false){const f=$(id);if(!force&&f.dataset.dirty==='1')return;for(const [key,value]of Object.entries(values||{})){const field=f.elements.namedItem(key);if(!field)continue;if(field.type==='checkbox')field.checked=!!value;else if(value!=null)field.value=String(value);}if(force)f.dataset.dirty='0';}
@@ -123,8 +127,8 @@ transport.addEventListener('health',renderHealth);
 transport.addEventListener('error',event=>{setText('connectionError',event.detail);toast(event.detail,true);});
 transport.addEventListener('reconnect',()=>setText('connectionError','Відновлюємо MQTT-з’єднання…'));
 let connectionCandidate=null;
-transport.addEventListener('connection',()=>{setText('connectionError','');if(connectionCandidate){try{const v=connectionCandidate;if(v.remember)localStorage.setItem(STORAGE,JSON.stringify({version:1,broker:v.url,username:v.username,password:v.password,base:v.base}));else localStorage.removeItem(STORAGE);}catch{toast('Браузер не дозволив зберегти підключення',true);}}log('З’єднання з MQTT-брокером встановлено');});
-$('connectionForm').addEventListener('submit',ev=>{ev.preventDefault();try{const values=validateConnection(formValues('connectionForm'));demo=false;$('demoBanner').hidden=true;manuallyDisconnected=false;connectionCandidate=values;transport.connect(values);toast('Підключаємося до брокера…');}catch(err){setText('connectionError',err.message);}});
+transport.addEventListener('connection',()=>{setText('connectionError','');if(connectionCandidate){try{const v=connectionCandidate;writeConnection(localStorage,v);}catch{toast('Браузер не дозволив зберегти підключення',true);}}log('З’єднання з MQTT-брокером встановлено');});
+$('connectionForm').addEventListener('submit',ev=>{ev.preventDefault();try{const values=validateConnection(formValues('connectionForm'));demo=false;$('demoBanner').hidden=true;manuallyDisconnected=false;connectionCandidate=values;try{writeConnection(localStorage,values);}catch{toast('Браузер не дозволив зберегти MQTT-підключення',true);}transport.connect(values);toast('Підключаємося до брокера…');}catch(err){setText('connectionError',err.message);}});
 $('disconnect').addEventListener('click',()=>{manuallyDisconnected=true;transport.disconnect();toast('Відключено. Автопідключення призупинене до наступного відкриття.');});
 $('forgetSettings').addEventListener('click',()=>{try{localStorage.removeItem(STORAGE);secrets.clear();$('password').value='';$('wifiForm').elements.password.value='';connectionCandidate=null;toast('Збережені паролі та PIN видалено з цього пристрою');}catch{toast('Не вдалося видалити дані браузера',true);}});
 $('clearLog').addEventListener('click',()=>{logs=[];localStorage.removeItem(LOG_KEY);renderLog();});
@@ -136,13 +140,25 @@ window.addEventListener('beforeinstallprompt',ev=>{ev.preventDefault();installPr
 $('installApp').addEventListener('click',async()=>{if(installPrompt){await installPrompt.prompt();installPrompt=null;}else toast('Safari: Поділитися → На початковий екран. Android: меню → Встановити додаток.');});
 $('applyUpdate').addEventListener('click',async()=>{if(busy)return toast('Дочекайтеся підтвердження поточної дії',true);transport.disconnect();waitingWorker?.postMessage({type:'SKIP_WAITING'});});
 if('serviceWorker'in navigator){let refreshing=false;const hadController=!!navigator.serviceWorker.controller;navigator.serviceWorker.addEventListener('controllerchange',()=>{if(hadController&&!refreshing){refreshing=true;location.reload();}});window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js',{scope:'./'}).then(reg=>{if(reg.waiting){waitingWorker=reg.waiting;$('updateBanner').hidden=false;}reg.addEventListener('updatefound',()=>{const worker=reg.installing;worker.addEventListener('statechange',()=>{if(worker.state==='installed'&&navigator.serviceWorker.controller){waitingWorker=reg.waiting;$('updateBanner').hidden=false;}});});}).catch(()=>toast('Офлайн-кеш недоступний. Відкрийте сайт через HTTPS або localhost.',true)));}
-window.addEventListener('online',()=>{if(!manuallyDisconnected&&transport.client&&!transport.client.connected)transport.client.reconnect();});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){renderHealth();if(!manuallyDisconnected&&transport.client&&!transport.client.connected)transport.client.reconnect();}});
+function autoConnect(){
+ if(demo||manuallyDisconnected||navigator.onLine===false)return;
+ if(transport.client){if(!transport.client.connected&&!transport.connecting&&!transport.client.reconnecting){transport.connecting=true;transport.client.reconnect();}return;}
+ try{const c=readConnection(localStorage);if(!c)return;fillForm('connectionForm',c);$('broker').value=c.url;connectionCandidate=c;transport.connect(c);}catch{setText('connectionError','Перевірте збережені налаштування MQTT');}
+}
+window.addEventListener('online',autoConnect);
+window.addEventListener('pageshow',autoConnect);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){renderHealth();autoConnect();}});
+let autoConnectTimer;
+$('connectionForm').addEventListener('change',()=>{
+ if(manuallyDisconnected||transport.client)return;clearTimeout(autoConnectTimer);
+ autoConnectTimer=setTimeout(()=>{if($('connectionForm').checkValidity()&&!transport.client&&!manuallyDisconnected)$('connectionForm').requestSubmit();},1200);
+});
+
 function tick(){const now=new Date(),opts={timeZone:'Europe/Kyiv',hour:'2-digit',minute:'2-digit'};setText('clock',now.toLocaleTimeString('uk-UA',opts));setText('headerClock',now.toLocaleTimeString('uk-UA',opts));setText('today',now.toLocaleDateString('uk-UA',{timeZone:'Europe/Kyiv',day:'numeric',month:'long',weekday:'short'}));renderHealth();}
 try{logs=JSON.parse(localStorage.getItem(LOG_KEY)||'[]').slice(0,150);const cached=localStorage.getItem(STATE_KEY);if(cached)state=parseDeviceState(cached);}catch{}
 renderLog();nav(location.hash.slice(1)||'home',true);
 if(demo)startDemo();else{
- try{const saved=JSON.parse(localStorage.getItem(STORAGE)||'null');if(saved&&saved.version===1){const c=validateConnection({url:saved.broker,username:saved.username,password:saved.password,base:saved.base||'garden/controller',remember:true});fillForm('connectionForm',c);$('broker').value=c.url;connectionCandidate=c;transport.connect(c);}else nav('settings');}catch{nav('settings');toast('Перевірте збережені налаштування MQTT',true);}
+ autoConnect();if(!transport.client)nav('settings');
  render();
 }
 tick();setInterval(tick,1000);

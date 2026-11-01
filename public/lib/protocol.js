@@ -40,6 +40,13 @@ export function nativeCommand(action,args={},state){
    return {suffix:`/water/${zone}/set`,payload:'START',matches:s=>s.watering&&s.watering_zone===zone};
   }
   case 'water.stop':return {suffix:'/water/stop/set',payload:'STOP',matches:s=>!s.watering};
+  case 'water.all':{
+   if(!['all','alltogether'].includes(args.action))throw Error('Невідомий спосіб поливу');
+   if(state?.rain_blocked)throw Error('Полив заблоковано захистом від дощу');
+   if(state?.mqtt_water_all_supported!==true)throw Error('Для поливу всіх зон через MQTT встановіть Garden_U V36.2 або запустіть локальний шлюз.');
+   const together=args.action==='alltogether';
+   return {suffix:`/water/${args.action}/set`,payload:'START',matches:s=>s.watering===true&&s.watering_all===true&&!!s.watering_simultaneous===together};
+  }
   case 'gate.command':{
    const gate=Number(args.gate),open=args.command==='open';if(![0,1].includes(gate)||!['open','close'].includes(args.command))throw Error('Невідома команда воріт');
    const g=state?.gates[gate];if(!g||(open?!g.open_allowed:!g.close_allowed))throw Error('Ця команда зараз недоступна для воріт');

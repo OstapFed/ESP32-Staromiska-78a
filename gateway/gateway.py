@@ -201,8 +201,8 @@ class Device:
 
     def state(self):
         s = self.request('/api/status')
-        if not isinstance(s, dict) or 'V36.1' not in s.get('firmware', ''):
-            raise ValidationError('Шлюз потребує прошивку Garden_U V36.1')
+        if not isinstance(s, dict) or not any(v in s.get('firmware', '') for v in ('V36.1', 'V36.2')):
+            raise ValidationError('Шлюз потребує прошивку Garden_U V36.1 / V36.2')
         return s
 
     def config(self):
