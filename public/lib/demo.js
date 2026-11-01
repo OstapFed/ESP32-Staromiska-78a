@@ -8,9 +8,9 @@ export function applyDemo(state,config,op,args){
  case 'heat.vacation.save':state.vacation_temperature=Number(args.vacTemp);break;
  case 'gate.command':{const g=state.gates[args.gate],open=args.command==='open';Object.assign(g,{state:open?1:0,state_text:open?'Відкриті':'Закриті',last_command:open?1:0,open_allowed:!open,close_allowed:open});break;}
  case 'gate.save':{const g=state.gates[args.gate];Object.assign(g,{name:args.name,pin_required:args.pinEnabled,reeds_enabled:args.reedsEnabled,pulse_ms:Number(args.pulseMs),state_confirmed:args.reedsEnabled});break;}
- case 'water.start':state.watering=true;state.watering_zone=Number(args.zone);break;
- case 'water.all':state.watering=true;state.watering_all=true;break;
- case 'water.stop':state.watering=false;state.watering_zone=0;state.watering_all=false;break;
+ case 'water.start':state.watering=true;state.watering_zone=Number(args.zone);state.watering_all=false;state.watering_simultaneous=false;break;
+ case 'water.all':state.watering=true;state.watering_all=true;state.watering_simultaneous=args.action==='alltogether';state.watering_zone=state.watering_simultaneous?0:1;break;
+ case 'water.stop':state.watering=false;state.watering_zone=0;state.watering_all=false;state.watering_simultaneous=false;break;
  case 'water.save':config.water[args.zone]={...args.config};break;
  case 'rain.save':config.rain={...args};break;
  case 'light.set':state.lights[0]=args.on;break;
