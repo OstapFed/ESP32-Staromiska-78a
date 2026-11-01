@@ -1,4 +1,4 @@
-const CACHE='staromiska-v22-6cd9c8161499';
+const CACHE='staromiska-v22-d911535edd73';
 const ASSETS=["./","./app.js","./apple-touch-icon.png","./favicon-32.png","./icon-192.png","./icon-512.png","./icons/mark.svg","./index.html","./lib/actions.js","./lib/connection.js","./lib/demo.js","./lib/protocol.js","./lib/secrets.js","./lib/transport.js","./manifest.webmanifest","./style.css","./upgrade.css","./vendor/MQTT-LICENSE.md","./vendor/mqtt.min.js","./vendor/version.json"];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('staromiska-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
