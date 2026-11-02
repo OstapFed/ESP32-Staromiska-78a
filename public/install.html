@@ -1,0 +1,36 @@
+<!doctype html><html lang="uk"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#078635"><meta name="description" content="Встановіть додаток Староміська 78а на iPhone без App Store. Керування Garden_U V36.2 через MQTT.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+<title>Староміська 78а — встановити на iPhone</title>
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="78а"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="apple-touch-icon.png"><link rel="icon" href="favicon-32.png"><link rel="stylesheet" href="install.css">
+</head><body>
+<header><a class="brand" href="./"><img src="icon-192.png" alt="" width="32" height="32">Староміська 78а</a><span class="eyebrow">ДЛЯ iPHONE</span></header>
+<main>
+<section class="hero" aria-labelledby="title">
+ <div class="identity"><img class="app-icon" src="icon-192.png" alt="Іконка додатка 78а" width="96" height="96"><div><span class="label">ВАШ ДІМ ПОРУЧ</span><h1 id="title">Староміська 78а</h1><p class="subtitle">Керуйте домом з iPhone.</p></div></div>
+ <p class="lead">Опалення, двоє воріт, полив та освітлення — в одному додатку під вашу прошивку Garden_U V36.2.</p>
+ <div class="features"><span>🔥 Опалення</span><span>🚪 Ворота</span><span>💧 Полив</span><span>💡 Світло</span></div>
+ <div class="actions"><a class="primary" href="#steps" id="showSteps">Встановити на iPhone <span aria-hidden="true">↗</span></a><a class="secondary" href="./">Відкрити додаток</a></div>
+ <p class="small">Без App Store та облікового запису розробника. Встановлення через Safari.</p>
+ <div id="platformNote" class="platform-note" role="status" hidden></div>
+</section>
+<section class="steps-card" id="steps" tabindex="-1" aria-labelledby="stepsTitle">
+ <div class="section-heading"><span class="label">МЕНШЕ ХВИЛИНИ</span><h2 id="stepsTitle">Додайте на початковий екран</h2></div>
+ <ol>
+  <li><span class="step-num">1</span><div><h3>Відкрийте цю сторінку в Safari</h3><p>Якщо посилання відкрилося всередині іншого додатка, скопіюйте його та відкрийте у Safari.</p></div></li>
+  <li><span class="step-num">2</span><div><h3>Натисніть «Поділитися»</h3><p><svg class="share-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 8H5v13h14V8h-3M12 15V2m-4 4 4-4 4 4"/></svg> Знайдіть значок зі стрілкою вгору на панелі Safari або в меню «Ще».</p></div></li>
+  <li><span class="step-num">3</span><div><h3>Оберіть «На початковий екран»</h3><p>Залиште ввімкненим <strong>«Відкрити як вебпрограму»</strong> (Open as Web App), якщо такий перемикач є. Натисніть <strong>«Додати»</strong>.</p></div></li>
+ </ol>
+ <div class="finish"><img src="favicon-32.png" alt="" width="32" height="32"><p>Готово! Відкривайте <strong>«78а»</strong> з початкового екрана iPhone — як окремий додаток.</p></div>
+ <button id="copyLink" type="button">Скопіювати посилання для iPhone</button><p id="copyStatus" class="small" role="status"></p><label id="manualCopy" hidden>Скопіюйте адресу<input id="installAddress" readonly type="url" aria-label="Адреса встановлення"></label>
+</section>
+<section class="details" aria-label="Можливості додатка">
+ <article><span aria-hidden="true">◎</span><h2>З дому й на відстані</h2><p>Керування через ваш MQTT-брокер. Обидві кнопки поливу всіх зон працюють у V36.2 без додаткового шлюзу.</p></article>
+ <article><span aria-hidden="true">↻</span><h2>Підключається автоматично</h2><p>Після встановлення один раз введіть дані MQTT у додатку. Надалі вони зберігаються на цьому iPhone.</p></article>
+ <article><span aria-hidden="true">⌂</span><h2>Інтерфейс завжди під рукою</h2><p>Після першого відкриття інтерфейс зберігається для запуску без мережі. Для керування ESP32 потрібне підключення до інтернету.</p></article>
+</section>
+<section class="questions"><h2>Перед першим використанням</h2><details><summary>Чи потрібно ще раз вводити пароль?</summary><p>У встановленому додатку введіть MQTT-адресу, логін та пароль один раз. iOS може зберігати дані Safari й встановленої вебпрограми окремо. Паролі зберігаються в локальному сховищі цього пристрою, а не у файлах GitHub.</p></details><details><summary>Що входить у додаток?</summary><p>Три режими опалення з регулюванням температури, незалежне керування двома воротами, чотири зони поливу, полив усіх зон, світло, показники датчиків і журнал. Для редагування розкладів та повних налаштувань використовується локальний шлюз із комплекту проєкту.</p></details><details><summary>Це файл IPA?</summary><p>Це встановлюваний PWA-додаток. Він додається через Safari, без IPA, профілів конфігурації та App Store. Після встановлення має власну іконку й окреме вікно.</p></details></section>
+<footer><span>Garden_U V36.2 · Вебпульт V22</span><a href="https://support.apple.com/guide/iphone/iphea86e5236/ios" target="_blank" rel="noopener noreferrer">Інструкція Apple ↗</a></footer>
+</main><script type="module" src="install.js"></script></body></html>

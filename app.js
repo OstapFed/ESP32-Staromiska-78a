@@ -1,3 +1,4 @@
+import {currentPlatform} from './lib/platform.js';
 import {ActionLocks,actionResource} from './lib/actions.js';
 import {readConnection,writeConnection} from './lib/connection.js';
 import {LocalSecrets} from './lib/secrets.js';
@@ -16,10 +17,13 @@ const fresh=()=>demo||transport.fresh,extended=()=>demo||(transport.gateway&&con
 const fmt=(v,suffix=' °C')=>typeof v==='number'&&Number.isFinite(v)?v.toFixed(1)+suffix:'—';
 const asTime=(hour,min)=>`${String(hour).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
 const knownPages=new Set(qa('.page').map(n=>n.id));
+function applyPlatform(){const platform=currentPlatform();document.body.dataset.standalone=String(platform.standalone);$('iphoneInstallHint').hidden=!platform.ios||platform.standalone;}
+applyPlatform();matchMedia('(display-mode: standalone)').addEventListener?.('change',applyPlatform);
+
 function toast(text,error=false){$('toast').hidden=false;$('toast').textContent=text;$('toast').classList.toggle('error',error);clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').hidden=true,error?7000:4000);}
 function log(text){logs.unshift({time:new Date().toISOString(),text});logs=logs.slice(0,150);try{localStorage.setItem(LOG_KEY,JSON.stringify(logs));}catch{}renderLog();}
 function renderLog(){$('log').replaceChildren(...logs.map(row=>{const n=document.createElement('div');n.textContent=new Date(row.time).toLocaleString('uk-UA')+' · '+row.text;return n;}));}
-function nav(id,replace=false){if(!knownPages.has(id))id='home';qa('.page').forEach(n=>n.classList.toggle('active',n.id===id));if(location.hash!=='#'+id){if(replace)historyReplace(id);else location.hash=id;}window.scrollTo({top:0,behavior:'instant'});if(['auto','vacation','sensors','lights','water','memo','settings'].includes(id))populateForms();}
+function nav(id,replace=false){if(!knownPages.has(id))id='home';qa('.page').forEach(n=>n.classList.toggle('active',n.id===id));qa('.phone-tabs [data-go]').forEach(n=>{const active=n.dataset.go===({manual:'heat',auto:'heat',vacation:'heat','gate-settings':'gates'}[id]||id);n.classList.toggle('is-current',active);if(active)n.setAttribute('aria-current','page');else n.removeAttribute('aria-current');});if(location.hash!=='#'+id){if(replace)historyReplace(id);else location.hash=id;}window.scrollTo({top:0,behavior:'instant'});if(['auto','vacation','sensors','lights','water','memo','settings'].includes(id))populateForms();}
 function historyReplace(id){window.history.replaceState(null,'','#'+id);}
 qa('[data-go]').forEach(n=>n.addEventListener('click',ev=>{ev.preventDefault();nav(n.dataset.go);}));
 window.addEventListener('hashchange',()=>nav(location.hash.slice(1)||'home',true));
@@ -137,7 +141,7 @@ $('enterDemo').addEventListener('click',()=>{transport.disconnect();demo=true;st
 $('leaveDemo').addEventListener('click',()=>{demo=false;$('demoBanner').hidden=true;state=null;config=null;configLoaded=false;render();nav('settings');});
 function startDemo(){demo=true;state=demoState();config=demoConfig();configLoaded=true;$('demoBanner').hidden=false;acceptState(state);populateForms(true);}
 window.addEventListener('beforeinstallprompt',ev=>{ev.preventDefault();installPrompt=ev;});
-$('installApp').addEventListener('click',async()=>{if(installPrompt){await installPrompt.prompt();installPrompt=null;}else toast('Safari: Поділитися → На початковий екран. Android: меню → Встановити додаток.');});
+$('installApp').addEventListener('click',async()=>{if(currentPlatform().standalone)return toast('Додаток уже встановлений і відкритий в окремому вікні.');if(installPrompt){await installPrompt.prompt();installPrompt=null;}else location.assign('./install.html');});
 $('applyUpdate').addEventListener('click',async()=>{if(busy)return toast('Дочекайтеся підтвердження поточної дії',true);transport.disconnect();waitingWorker?.postMessage({type:'SKIP_WAITING'});});
 if('serviceWorker'in navigator){let refreshing=false;const hadController=!!navigator.serviceWorker.controller;navigator.serviceWorker.addEventListener('controllerchange',()=>{if(hadController&&!refreshing){refreshing=true;location.reload();}});window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js',{scope:'./'}).then(reg=>{if(reg.waiting){waitingWorker=reg.waiting;$('updateBanner').hidden=false;}reg.addEventListener('updatefound',()=>{const worker=reg.installing;worker.addEventListener('statechange',()=>{if(worker.state==='installed'&&navigator.serviceWorker.controller){waitingWorker=reg.waiting;$('updateBanner').hidden=false;}});});}).catch(()=>toast('Офлайн-кеш недоступний. Відкрийте сайт через HTTPS або localhost.',true)));}
 function autoConnect(){

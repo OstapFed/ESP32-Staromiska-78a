@@ -3,14 +3,15 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' wss:; object-src 'none'; base-uri 'self'; form-action 'self'">
 <title>Староміська 78а · Пульт V22</title><meta name="description" content="Опалення, ворота, полив та освітлення Garden_U V36.1">
 <link rel="icon" href="favicon-32.png"><link rel="apple-touch-icon" href="apple-touch-icon.png"><link rel="manifest" href="manifest.webmanifest">
-<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="78а"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="stylesheet" href="style.css"><link rel="stylesheet" href="upgrade.css">
+<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="78а"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css"><link rel="stylesheet" href="upgrade.css"><link rel="stylesheet" href="iphone.css">
 </head><body>
 <header class="top"><div class="top-inner"><a class="brand" href="#home" aria-label="На головну"><span class="brand-mark"><img src="icon-192.png" width="30" height="30" alt=""></span><b>Староміська 78а</b></a><div class="header-tools"><span id="headerClock">—</span><button class="header-menu" data-go="home" aria-label="Головне меню">☰</button></div></div></header>
 <main class="wrap">
 <div id="demoBanner" class="warning" hidden>Демонстрація інтерфейсу. Ці дії не керують ESP32.<button class="inline-link" id="leaveDemo">Вийти з демо</button></div>
 <div id="updateBanner" class="warning" hidden>Доступне оновлення додатку.<button class="inline-link" id="applyUpdate">Оновити</button></div>
 <section id="home" class="page active" aria-label="Головна">
+<aside id="iphoneInstallHint" class="iphone-install-hint" hidden><span>Додайте «78а» на початковий екран iPhone.</span><a href="install.html">Встановити ↗</a></aside>
 <div class="garden-scene"><div class="garden-label"><b>🌿 Мій сад</b><small id="today">—</small></div><div class="moon" aria-hidden="true"></div><div class="tree" aria-hidden="true"><i></i></div><div class="hill hill-back" aria-hidden="true"></div><div class="hill hill-front" aria-hidden="true"></div><div class="top-metrics"><span><small>◷ Час</small><b id="clock">—</b></span><span><small>🌡 Надворі</small><b id="outdoor">—</b><small>Дані контролера</small></span><span><small>⌂ В хаті</small><b id="temperature">—</b></span></div></div>
 <div class="menu">
 <button data-go="water"><span class="emoji blue">💧</span><b>Полив</b><small>4 зони / Розклад</small></button>
@@ -48,12 +49,19 @@
 <div class="panel"><h3>Повний доступ до налаштувань</h3><p id="gatewayStatus" class="note">Локальний шлюз не підключений.</p><p class="note">V36.1 приймає основні команди через MQTT. Для розкладів, герконів і налаштувань потрібен шлюз у домашній мережі — він входить до вихідного проєкту. Працює через ваш брокер, без відкривання портів роутера.</p><button id="refreshConfig" class="secondary" data-extended>Оновити налаштування з ESP32</button><a class="button-link secondary" id="localPanel" href="#" target="_blank" rel="noopener noreferrer">Відкрити локальну панель ESP32 ↗</a></div>
 <div class="panel"><h3>🍎 Apple HomeKit</h3><form id="homekitForm" data-gateway-form><label>Режим інтеграції<select name="mode"><option value="0">Вимкнено</option><option value="1">Напряму ESP32-S3 / HomeSpan</option><option value="2">Через Home Assistant / MQTT</option></select></label><p id="homekitState" class="note">—</p><button type="submit" data-extended>💾 Зберегти й перезапустити ESP32</button></form></div>
 <div class="panel"><h3>📶 Wi-Fi контролера</h3><form id="wifiForm" data-gateway-form><label>Назва домашньої мережі<input name="ssid" maxlength="32" required></label><label>Пароль мережі<input name="password" type="password" autocomplete="new-password" placeholder="Новий пароль" maxlength="64"></label><p class="note">Після збереження ESP32 перезапуститься. Якщо IP зміниться, оновіть ESP_URL у шлюзі.</p><button type="submit" data-extended>💾 Зберегти й перезапустити ESP32</button></form></div>
-<div class="panel"><h3>Додаток на телефоні</h3><button id="installApp" class="secondary full">Встановити PWA</button><p id="installHint" class="note">iPhone: Safari → Поділитися → На початковий екран. Android: меню браузера → Встановити додаток.</p><button id="enterDemo" class="secondary full">Переглянути демонстрацію</button></div>
+<div class="panel"><h3>Додаток на телефоні</h3><button id="installApp" class="secondary full">Встановити PWA</button><p id="installHint" class="note">iPhone: Safari → Поділитися → На початковий екран. Залиште ввімкненим «Відкрити як вебпрограму», якщо цей перемикач є. Android: меню браузера → Встановити додаток.</p><button id="enterDemo" class="secondary full">Переглянути демонстрацію</button></div>
 </section>
 <section id="info" class="page"><div class="page-title"><button class="back" data-go="home" aria-label="Назад">‹</button><h2>ⓘ Інформація</h2></div><div class="panel"><div id="deviceDetails" class="details"></div><p class="note">Сумісність: Garden_U V36.1 / V36.2 / ESP32-S3 N16R8. Вебпульт V22 продовжує інтерфейс V21.</p><details><summary>Підключення GPIO</summary><p class="note">Полив: 4–7 · Дощ: 8 · Світло: 9 · Реле воріт: 10/11 · Котел: 12 · DS18B20: 14 · Геркони заїзду: 15/16 · Геркони гаража: 17/18. Геркони замикаються на GND.</p></details></div></section>
 <div class="statusbar"><span id="connection" class="pill">MQTT не підключено</span><span id="lastSeen">Очікування даних</span></div><div id="stale" class="warning">Немає свіжих даних. Керування вимкнено.<button class="inline-link" data-go="settings">Підключення ↗</button></div>
 <footer><span>Староміська 78а</span><span>Вебпульт V22 · Garden_U V36.1 / V36.2</span></footer>
 </main>
+<nav class="phone-tabs" aria-label="Основна навігація додатка">
+<button data-go="home"><span aria-hidden="true">⌂</span>Головна</button>
+<button data-go="heat"><span aria-hidden="true">🔥</span>Опалення</button>
+<button data-go="gates"><span aria-hidden="true">🚪</span>Ворота</button>
+<button data-go="water"><span aria-hidden="true">💧</span>Полив</button>
+<button data-go="lights"><span aria-hidden="true">💡</span>Світло</button>
+</nav>
 <div id="toast" role="status" aria-live="polite" hidden></div>
 <dialog id="confirmDialog"><form method="dialog"><h3 id="confirmTitle">Підтвердження</h3><p id="confirmText" class="note"></p><label id="pinLabel" hidden>PIN воріт<input id="gatePin" type="password" inputmode="numeric" autocomplete="off" maxlength="12"></label><div class="two"><button value="cancel" class="secondary">Скасувати</button><button id="confirmButton" value="ok">Підтвердити</button></div></form></dialog>
 <script src="vendor/mqtt.min.js"></script><script type="module" src="app.js"></script>

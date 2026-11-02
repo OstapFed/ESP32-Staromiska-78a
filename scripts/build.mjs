@@ -21,7 +21,7 @@ self.addEventListener('message',event=>{if(event.data?.type==='SKIP_WAITING')sel
 self.addEventListener('fetch',event=>{
  const url=new URL(event.request.url);if(event.request.method!=='GET'||url.origin!==self.location.origin)return;
  const key=url.pathname.slice(new URL('./',self.location).pathname.length);
- if(event.request.mode==='navigate'){event.respondWith(fetch(event.request).catch(()=>caches.match('./index.html')));return;}
+ if(event.request.mode==='navigate'){event.respondWith(fetch(event.request).catch(()=>caches.open(CACHE).then(async cache=>(await cache.match('./'+(key||'index.html')))||cache.match('./index.html'))));return;}
  if(!ASSETS.includes('./'+key))return;
  event.respondWith(caches.open(CACHE).then(cache=>cache.match('./'+key).then(cached=>cached||fetch(event.request))));
 });
